@@ -1,9 +1,12 @@
 package shared
 
 import (
+	"crypto/sha1"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"time"
 )
 
@@ -106,14 +109,33 @@ type Requests struct {
 	PendingMemberships map[int][]MembershipRequest
 	PendingBallots     map[int][]BallotRequest
 	PendingVotes       map[int][]VoteResponse
+	PendingGetRequest  map[int]string
+	PendingPutRequest  map[int]DBObject
+	Ring               []RingEntry
 }
 
 // Returns a new instance of a Requests (pointer).
 func NewRequests() *Requests {
+	var Ring []RingEntry
+
+	for id := 1; id <= MAX_NODES; id++ {
+		Ring = append(Ring, RingEntry{
+			Hash:   NodePosition(id),
+			NodeID: id,
+		})
+	}
+
+	sort.Slice(Ring, func(i, j int) bool {
+		return Ring[i].Hash < Ring[j].Hash
+	})
+
 	return &Requests{
 		PendingMemberships: make(map[int][]MembershipRequest),
 		PendingBallots:     make(map[int][]BallotRequest),
 		PendingVotes:       make(map[int][]VoteResponse),
+		PendingGetRequest:  make(map[int]string),
+		PendingPutRequest:  make(map[int]DBObject),
+		Ring:               Ring,
 	}
 }
 
@@ -273,4 +295,18 @@ func (req *Requests) SendGetRequest(key string, reply *DBObject) error {
 	// todo
 
 	return nil
+}
+
+type RingEntry struct {
+	Hash   uint64
+	NodeID int
+}
+
+func HashString(s string) uint64 {
+	hash := sha1.Sum([]byte(s))
+	return binary.BigEndian.Uint64(hash[:8])
+}
+
+func NodePosition(id int) uint64 {
+	return HashString(fmt.Sprintf("node-%d", id))
 }
