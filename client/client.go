@@ -9,11 +9,13 @@ import (
 	"strings"
 )
 
+var contexts = make(map[string]shared.Context)
+
 func put(server rpc.Client, key string, data string) {
-	obj := shared.DBObject{
+	obj := shared.PutRequest{
 		Key:     key,
 		Object:  data,
-		Context: "",
+		Context: contexts[key],
 	}
 
 	var reply bool
@@ -24,8 +26,8 @@ func put(server rpc.Client, key string, data string) {
 
 }
 
-func get(server rpc.Client, key string) shared.DBObject {
-	var reply shared.DBObject
+func get(server rpc.Client, key string) shared.ObjectVersion {
+	var reply shared.ObjectVersion
 	err := server.Call("Requests.SendGetRequest", key, &reply)
 	if err != nil {
 		fmt.Println("Error sending Get request:", err)
@@ -56,22 +58,19 @@ func main() {
 			break
 		}
 
-		if strings.Contains(cmd, "get") {
-			afterOpenParen := strings.Split(cmd, "(")[1]
-			key, _, _ := strings.Cut(afterOpenParen, ")")
+		args := strings.Fields(cmd)
+
+		if strings.Contains(strings.ToLower(args[0]), "get") {
+			key := args[1]
 			result := get(*server, key)
 
 			fmt.Printf("%v\n", result)
 			continue
 		}
 
-		if strings.Contains(cmd, "put") {
-			afterOpenParen := strings.Split(cmd, "(")[1]
-			beforeCloseParen := strings.Split(afterOpenParen, ")")[0]
-			args := strings.Split(beforeCloseParen, ",")
-
-			key := strings.TrimSpace(args[0])
-			obj := strings.TrimSpace(args[1])
+		if strings.Contains(strings.ToLower(args[0]), "put") {
+			key := args[1]
+			obj := args[2]
 
 			put(*server, key, obj)
 

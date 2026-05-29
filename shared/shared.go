@@ -110,7 +110,7 @@ type Requests struct {
 	PendingBallots     map[int][]BallotRequest
 	PendingVotes       map[int][]VoteResponse
 	PendingGetRequest  map[int]string
-	PendingPutRequest  map[int]DBObject
+	PendingPutRequest  map[int]ObjectVersion
 	Ring               []RingEntry
 }
 
@@ -134,7 +134,7 @@ func NewRequests() *Requests {
 		PendingBallots:     make(map[int][]BallotRequest),
 		PendingVotes:       make(map[int][]VoteResponse),
 		PendingGetRequest:  make(map[int]string),
-		PendingPutRequest:  make(map[int]DBObject),
+		PendingPutRequest:  make(map[int]ObjectVersion),
 		Ring:               Ring,
 	}
 }
@@ -279,19 +279,28 @@ func (m *Requests) SendBallot(payload Ballot, reply *bool) error {
 
 /*---------------*/
 
-type DBObject struct {
+type PutRequest struct {
 	Key     string
 	Object  string
-	Context string // change later to hold vector clocks + history
+	Context Context
 }
 
-func (req *Requests) SendPutRequest(obj DBObject, reply *bool) error {
+type ObjectVersion struct {
+	Object  string
+	Context Context
+}
+
+type Context struct {
+	VectorClock map[int]int
+}
+
+func (req *Requests) SendPutRequest(kv PutRequest, reply *bool) error {
 	// todo
 
 	return nil
 }
 
-func (req *Requests) SendGetRequest(key string, reply *DBObject) error {
+func (req *Requests) SendGetRequest(key string, reply *ObjectVersion) error {
 	// todo
 
 	return nil
