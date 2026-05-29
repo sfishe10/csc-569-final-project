@@ -254,3 +254,23 @@ func (m *Requests) SendBallot(payload Ballot, reply *bool) error {
 
 	return nil
 }
+
+/*---------------*/
+
+type DBObject struct {
+	Key     string
+	Object  string
+	Context string // change later to hold vector clocks + history
+}
+
+func (req *Requests) SendPutRequest(obj DBObject, reply *bool) error {
+	// todo
+
+	return nil
+}
+
+func (req *Requests) SendGetRequest(key string, reply *DBObject) error {
+	// todo
+
+	return nil
+}
