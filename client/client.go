@@ -43,7 +43,7 @@ func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Println("Enter text (Ctrl+D to quit on macOS/Linux, Ctrl+Z then Enter on Windows):")
+	fmt.Println("Usage:\nPUT <key> <obj>\nGET<key>")
 
 	for {
 		fmt.Print("> ")

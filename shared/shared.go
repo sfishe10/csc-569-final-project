@@ -25,6 +25,7 @@ type Node struct {
 	Time      float64
 	Alive     bool
 	Role      string
+	Store     Store
 }
 
 // Generate random crash time from 10-60 seconds
@@ -110,7 +111,7 @@ type Requests struct {
 	PendingBallots     map[int][]BallotRequest
 	PendingVotes       map[int][]VoteResponse
 	PendingGetRequest  map[int]string
-	PendingPutRequest  map[int]ObjectVersion
+	PendingPutRequest  map[int]PutRequest
 	Ring               []RingEntry
 }
 
@@ -134,7 +135,7 @@ func NewRequests() *Requests {
 		PendingBallots:     make(map[int][]BallotRequest),
 		PendingVotes:       make(map[int][]VoteResponse),
 		PendingGetRequest:  make(map[int]string),
-		PendingPutRequest:  make(map[int]ObjectVersion),
+		PendingPutRequest:  make(map[int]PutRequest),
 		Ring:               Ring,
 	}
 }
@@ -294,7 +295,11 @@ type Context struct {
 	VectorClock map[int]int
 }
 
-func (req *Requests) SendPutRequest(kv PutRequest, reply *bool) error {
+type Store struct {
+	Data map[string][]ObjectVersion
+}
+
+func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
 	// todo
 
 	return nil

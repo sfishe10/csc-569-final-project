@@ -217,7 +217,8 @@ func main() {
 
 	currTime := calcTime()
 	// Construct self
-	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER}
+	var store = shared.Store{Data: make(map[string][]shared.ObjectVersion)}
+	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER, Store: store}
 	var self_node_response shared.Node // Allocate space for a response to overwrite this
 
 	// Add node with input ID
