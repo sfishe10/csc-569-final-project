@@ -112,10 +112,12 @@ type Requests struct {
 	PendingMemberships       map[int][]MembershipRequest
 	PendingBallots           map[int][]BallotRequest
 	PendingVotes             map[int][]VoteResponse
-	PendingGetRequest        map[int]string
+	PendingCoordGetRequest   map[int]string
+	PendingReplicaGetRequest map[int]string
 	PendingCoordPutRequest   map[int]PutRequest
 	PendingReplicaPutRequest map[int]PutRequest
 	ReplicaPutResponses      []int
+	ReplicaGetResponses      []GetResponse
 	Ring                     []RingEntry
 }
 
@@ -138,10 +140,12 @@ func NewRequests() *Requests {
 		PendingMemberships:       make(map[int][]MembershipRequest),
 		PendingBallots:           make(map[int][]BallotRequest),
 		PendingVotes:             make(map[int][]VoteResponse),
-		PendingGetRequest:        make(map[int]string),
+		PendingCoordGetRequest:   make(map[int]string),
+		PendingReplicaGetRequest: make(map[int]string),
 		PendingCoordPutRequest:   make(map[int]PutRequest),
 		PendingReplicaPutRequest: make(map[int]PutRequest),
 		ReplicaPutResponses:      []int{},
+		ReplicaGetResponses:      []GetResponse{},
 		Ring:                     Ring,
 	}
 }
@@ -293,6 +297,12 @@ type PutRequest struct {
 	Context  Context
 }
 
+type GetResponse struct {
+	FromNodeID int
+	Key        string
+	Versions   []ObjectVersion
+}
+
 type ObjectVersion struct {
 	Object  string
 	Context Context
@@ -304,6 +314,12 @@ type Context struct {
 
 type Store struct {
 	Data map[string][]ObjectVersion
+}
+
+func NewStore() *Store {
+	return &Store{
+		Data: make(map[string][]ObjectVersion),
+	}
 }
 
 type ClockRelation int
@@ -432,6 +448,9 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 
 	*reply = putReq
 
+	// consume the request
+	delete(req.PendingCoordPutRequest, coord_id)
+
 	return nil
 }
 
@@ -439,6 +458,9 @@ func (req *Requests) ListenReplicaPutRequest(coord_id int, reply *PutRequest) er
 	putReq := req.PendingReplicaPutRequest[coord_id]
 
 	*reply = putReq
+
+	// consume the request
+	delete(req.PendingReplicaPutRequest, coord_id)
 
 	return nil
 }
@@ -456,11 +478,25 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 
 	*reply = responses
 
+	// consume the response
+	req.ReplicaPutResponses = []int{}
+
 	return nil
 }
 
 func (req *Requests) SendGetRequest(key string, reply *ObjectVersion) error {
-	// todo
+	coordinator_node := req.FindCoordinator(HashString(key))
+	coord_id := coordinator_node.NodeID
+
+	req.PendingCoordGetRequest[coord_id] = key
+
+	return nil
+}
+
+func (req *Requests) RespondToGetRequest(resp GetResponse, reply *bool) error {
+	req.ReplicaGetResponses = append(req.ReplicaGetResponses, resp)
+
+	*reply = true
 
 	return nil
 }

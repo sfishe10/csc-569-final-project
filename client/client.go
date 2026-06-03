@@ -34,6 +34,8 @@ func get(server rpc.Client, key string) shared.ObjectVersion {
 		fmt.Println("Error sending Get request:", err)
 	}
 
+	// wait for the response
+
 	return reply
 }
 

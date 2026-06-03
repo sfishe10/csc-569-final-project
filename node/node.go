@@ -237,6 +237,54 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 	return true
 }
 
+func handleCoordGetRequest(server rpc.Client, id int) bool {
+	var incomingKey string
+
+	err := server.Call("Requests.ListenCoordGetRequest", id, &incomingKey)
+	if err != nil {
+		fmt.Println("Error reading coord get request:", err)
+		return false
+	}
+
+	if incomingKey == "" {
+		return true
+	}
+
+	// Collect coordinator's local versions first.
+	collected := shared.NewStore()
+
+	for _, version := range self_node.Store.Data[incomingKey] {
+		collected.Put(incomingKey, version)
+	}
+
+	// the request has already been sent to the replicas, so wait for R - 1 responses
+	deadline := time.After(QUORUM_TIMEOUT)
+	acks := 1 // coordinator counts itself
+
+	for acks < R {
+		select {
+		case <-deadline:
+			return false // read failed
+		default:
+			response := []shared.GetResponse{}
+			err := server.Call("Requests.ListenReplicaGetResponses", id, &response)
+			if err != nil {
+				fmt.Println("Error listening for responses:", err)
+				return false
+			}
+
+			acks += len(response)
+
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	// send all the collected replicas back to the client
+	// todo
+
+	return true
+}
+
 func handleReplicaPutRequest(server rpc.Client, id int) {
 	var incomingReplicaPutRequest shared.PutRequest
 
@@ -246,21 +294,53 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 		return
 	}
 
-	if incomingReplicaPutRequest.Key != "" {
-		// write locally
-		obj_version := shared.ObjectVersion{
-			Object:  incomingReplicaPutRequest.Object,
-			Context: incomingReplicaPutRequest.Context,
-		}
-		self_node.Store.Put(incomingReplicaPutRequest.Key, obj_version)
+	if incomingReplicaPutRequest.Key == "" {
+		return
+	}
 
-		// send a response so the coordinator knows it was written
-		var reply bool
-		err = server.Call("Requests.RespondToPutRequest", id, &reply)
-		if err != nil {
-			fmt.Println("Error responding to put request:", err)
-			return
-		}
+	// write locally
+	obj_version := shared.ObjectVersion{
+		Object:  incomingReplicaPutRequest.Object,
+		Context: incomingReplicaPutRequest.Context,
+	}
+	self_node.Store.Put(incomingReplicaPutRequest.Key, obj_version)
+
+	// send a response so the coordinator knows it was written
+	var reply bool
+	err = server.Call("Requests.RespondToGetRequest", id, &reply)
+	if err != nil {
+		fmt.Println("Error responding to get request:", err)
+		return
+	}
+}
+
+func handleReplicaGetRequest(server rpc.Client, id int) {
+	var incomingReplicaGetRequest shared.PutRequest
+
+	err := server.Call("Requests.ListenReplicaGetRequest", id, &incomingReplicaGetRequest)
+	if err != nil {
+		fmt.Println("Error reading replica get request:", err)
+		return
+	}
+
+	key := incomingReplicaGetRequest.Key
+	if key == "" {
+		return
+	}
+
+	localVersions := self_node.Store.Data[key]
+	resp := shared.GetResponse{
+		FromNodeID: id,
+		Key:        key,
+		Versions:   localVersions,
+	}
+
+	// send local versions to the coordinator
+	var reply bool
+	err = server.Call("Requests.RespondToGetRequest", resp, &reply)
+	if err != nil {
+		fmt.Println("Error responding to get request:", err)
+		return
 	}
 }
 
@@ -271,6 +351,8 @@ func readMessages(server rpc.Client, id int, membership shared.Membership) *shar
 	handleBallots(server, id)
 	handleCoordPutRequest(server, id)
 	handleReplicaPutRequest(server, id)
+	handleCoordGetRequest(server, id)
+	handleReplicaGetRequest(server, id)
 
 	return updatedMembership
 }
@@ -304,8 +386,8 @@ func main() {
 
 	currTime := calcTime()
 	// Construct self
-	var store = shared.Store{Data: make(map[string][]shared.ObjectVersion)}
-	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER, Store: store}
+	var store = shared.NewStore()
+	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER, Store: *store}
 	var self_node_response shared.Node // Allocate space for a response to overwrite this
 
 	// Add node with input ID
