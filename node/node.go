@@ -22,6 +22,8 @@ const (
 	ROLE_LEADER    = "LEADER"
 	VOTE_TIME      = 8
 	N              = 3 // how many nodes to replicate data on
+	W              = 2 // write quorum
+	R              = 2 // read quorum
 )
 
 var self_node shared.Node
@@ -115,21 +117,13 @@ func sendMessage(server rpc.Client, id int, membership shared.Membership) {
 	}
 }
 
-// Read incoming messages from other nodes
-func readMessages(server rpc.Client, id int, membership shared.Membership) *shared.Membership {
+func handleMemberships(server rpc.Client, id int, membership shared.Membership) *shared.Membership {
 	var incomingMemberships []shared.MembershipRequest
-	var incomingBallots []shared.Ballot
 
 	// Call RPC to check for messages
 	err := server.Call("Requests.ListenMemberships", id, &incomingMemberships)
 	if err != nil {
 		fmt.Println("Error reading membership messages:", err)
-		return &membership
-	}
-
-	err = server.Call("Requests.ListenBallots", id, &incomingBallots)
-	if err != nil {
-		fmt.Println("Error reading ballot messages:", err)
 		return &membership
 	}
 
@@ -163,6 +157,18 @@ func readMessages(server rpc.Client, id int, membership shared.Membership) *shar
 		}
 	}
 
+	return updated
+}
+
+func handleBallots(server rpc.Client, id int) {
+	var incomingBallots []shared.Ballot
+
+	err := server.Call("Requests.ListenBallots", id, &incomingBallots)
+	if err != nil {
+		fmt.Println("Error reading ballot messages:", err)
+		return
+	}
+
 	for _, request := range incomingBallots {
 		if !voted {
 			fmt.Printf("Node %d voted Yes for Node %d\n", self_node.ID, request.NodeID)
@@ -184,8 +190,61 @@ func readMessages(server rpc.Client, id int, membership shared.Membership) *shar
 			request.VoteNo()
 		}
 	}
+}
 
-	return updated
+func handleCoordPutRequest(server rpc.Client, id int) {
+	var incomingCoordPutRequest shared.PutRequest
+
+	err := server.Call("Requests.ListenCoordPutRequest", id, &incomingCoordPutRequest)
+	if err != nil {
+		fmt.Println("Error reading coord put request:", err)
+		return
+	}
+
+	if incomingCoordPutRequest.Key != "" {
+		// write locally
+		obj_version := shared.ObjectVersion{
+			Object:  incomingCoordPutRequest.Object,
+			Context: incomingCoordPutRequest.Context,
+		}
+		self_node.Store.Put(incomingCoordPutRequest.Key, obj_version)
+
+		// the request has already been sent to the replicas, so wait for W - 1 responses
+		// TODO
+	}
+}
+
+func handleReplicaPutRequest(server rpc.Client, id int) {
+	var incomingReplicaPutRequest shared.PutRequest
+
+	err := server.Call("Requests.ListenReplicaPutRequest", id, &incomingReplicaPutRequest)
+	if err != nil {
+		fmt.Println("Error reading replica put request:", err)
+		return
+	}
+
+	if incomingReplicaPutRequest.Key != "" {
+		// write locally
+		obj_version := shared.ObjectVersion{
+			Object:  incomingReplicaPutRequest.Object,
+			Context: incomingReplicaPutRequest.Context,
+		}
+		self_node.Store.Put(incomingReplicaPutRequest.Key, obj_version)
+
+		// send a response so the coordinator knows it was written
+		// TODO
+	}
+}
+
+// Read incoming messages from other nodes
+func readMessages(server rpc.Client, id int, membership shared.Membership) *shared.Membership {
+	updatedMembership := handleMemberships(server, id, membership)
+
+	handleBallots(server, id)
+	handleCoordPutRequest(server, id)
+	handleReplicaPutRequest(server, id)
+
+	return updatedMembership
 }
 
 func calcTime() float64 {

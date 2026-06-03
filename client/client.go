@@ -13,9 +13,10 @@ var contexts = make(map[string]shared.Context)
 
 func put(server rpc.Client, key string, data string) {
 	obj := shared.PutRequest{
-		Key:     key,
-		Object:  data,
-		Context: contexts[key],
+		Coord_id: -1, // this will be updated later
+		Key:      key,
+		Object:   data,
+		Context:  contexts[key],
 	}
 
 	var reply bool

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"sort"
 	"time"
@@ -16,6 +17,7 @@ const (
 	ROLE_CANDIDATE = "CANDIDATE"
 	ROLE_LEADER    = "LEADER"
 	VOTE_TIME      = 8
+	N              = 3 // how many nodes to replicate data on
 )
 
 // Node struct represents a computing node.
@@ -107,12 +109,14 @@ type VoteResponse struct {
 
 // Requests struct represents pending message requests
 type Requests struct {
-	PendingMemberships map[int][]MembershipRequest
-	PendingBallots     map[int][]BallotRequest
-	PendingVotes       map[int][]VoteResponse
-	PendingGetRequest  map[int]string
-	PendingPutRequest  map[int]PutRequest
-	Ring               []RingEntry
+	PendingMemberships       map[int][]MembershipRequest
+	PendingBallots           map[int][]BallotRequest
+	PendingVotes             map[int][]VoteResponse
+	PendingGetRequest        map[int]string
+	PendingCoordPutRequest   map[int]PutRequest
+	PendingReplicaPutRequest map[int]PutRequest
+	ReplicaPutResponses      []int
+	Ring                     []RingEntry
 }
 
 // Returns a new instance of a Requests (pointer).
@@ -131,12 +135,14 @@ func NewRequests() *Requests {
 	})
 
 	return &Requests{
-		PendingMemberships: make(map[int][]MembershipRequest),
-		PendingBallots:     make(map[int][]BallotRequest),
-		PendingVotes:       make(map[int][]VoteResponse),
-		PendingGetRequest:  make(map[int]string),
-		PendingPutRequest:  make(map[int]PutRequest),
-		Ring:               Ring,
+		PendingMemberships:       make(map[int][]MembershipRequest),
+		PendingBallots:           make(map[int][]BallotRequest),
+		PendingVotes:             make(map[int][]VoteResponse),
+		PendingGetRequest:        make(map[int]string),
+		PendingCoordPutRequest:   make(map[int]PutRequest),
+		PendingReplicaPutRequest: make(map[int]PutRequest),
+		ReplicaPutResponses:      []int{},
+		Ring:                     Ring,
 	}
 }
 
@@ -281,9 +287,15 @@ func (m *Requests) SendBallot(payload Ballot, reply *bool) error {
 /*---------------*/
 
 type PutRequest struct {
-	Key     string
-	Object  string
-	Context Context
+	Coord_id int
+	Key      string
+	Object   string
+	Context  Context
+}
+
+type PutResponse struct {
+	ID      int
+	Success bool
 }
 
 type ObjectVersion struct {
@@ -299,8 +311,88 @@ type Store struct {
 	Data map[string][]ObjectVersion
 }
 
+type ClockRelation int
+
+const (
+	Older ClockRelation = iota
+	Newer
+	Concurrent
+	Equal
+)
+
+// func CompareContexts(a, b Context) ClockRelation {
+
+// }
+
+func (s *Store) Put(key string, incoming ObjectVersion) {
+	existing := s.Data[key]
+
+	// no versions stored yet
+	if len(existing) == 0 {
+		s.Data[key] = []ObjectVersion{incoming}
+		return
+	}
+
+}
+
+func IncrementContext(ctx Context, nodeID int) Context {
+	newClock := make(map[int]int)
+
+	// copy all the existing values
+	maps.Copy(newClock, ctx.VectorClock)
+
+	// increment the coordinator node's counter
+	newClock[nodeID]++
+
+	return Context{VectorClock: newClock}
+}
+
 func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
-	// todo
+	coordinator_node := req.FindCoordinator(HashString(putReq.Key))
+	coord_id := coordinator_node.NodeID
+
+	// attach the coordinator's ID to the request
+	putReq.Coord_id = coord_id
+	req.PendingCoordPutRequest[coord_id] = putReq
+
+	return nil
+}
+
+func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) error {
+	putReq := req.PendingCoordPutRequest[coord_id]
+
+	// there are no pending requests
+	if putReq.Key == "" {
+		return nil
+	}
+
+	new_context := IncrementContext(putReq.Context, coord_id)
+
+	putReq.Context = new_context
+
+	// send it to the replicas
+	for i := range N {
+		id := (coord_id + i) % MAX_NODES // wrap around
+		req.PendingReplicaPutRequest[id] = putReq
+	}
+
+	*reply = putReq
+
+	return nil
+}
+
+func (req *Requests) ListenReplicaPutRequest(coord_id int, reply *PutRequest) error {
+	putReq := req.PendingReplicaPutRequest[coord_id]
+
+	*reply = putReq
+
+	return nil
+}
+
+func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error {
+	responses := req.ReplicaPutResponses
+
+	*reply = responses
 
 	return nil
 }
@@ -323,4 +415,14 @@ func HashString(s string) uint64 {
 
 func NodePosition(id int) uint64 {
 	return HashString(fmt.Sprintf("node-%d", id))
+}
+
+func (req *Requests) FindCoordinator(hash uint64) RingEntry {
+	for _, node := range req.Ring {
+		if hash <= node.Hash {
+			return node
+		}
+	}
+
+	return req.Ring[0] // wrap around
 }
