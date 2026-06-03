@@ -315,9 +315,41 @@ const (
 	Equal
 )
 
-// func CompareContexts(a, b Context) ClockRelation {
+func CompareContexts(a, b Context) ClockRelation {
+	aGreater := false
+	bGreater := false
 
-// }
+	// Check entries in a
+	for nodeID, aCount := range a.VectorClock {
+		bCount := b.VectorClock[nodeID]
+
+		if aCount > bCount {
+			aGreater = true
+		} else if aCount < bCount {
+			bGreater = true
+		}
+	}
+
+	// Check entries that exist only in b
+	for nodeID, bCount := range b.VectorClock {
+		if _, exists := a.VectorClock[nodeID]; !exists {
+			if bCount > 0 {
+				bGreater = true
+			}
+		}
+	}
+
+	if aGreater && bGreater {
+		return Concurrent
+	}
+	if aGreater {
+		return Newer
+	}
+	if bGreater {
+		return Older
+	}
+	return Equal
+}
 
 func (s *Store) Put(key string, incoming ObjectVersion) {
 	existing := s.Data[key]
@@ -328,6 +360,33 @@ func (s *Store) Put(key string, incoming ObjectVersion) {
 		return
 	}
 
+	newVersions := []ObjectVersion{}
+
+	for _, existingVersion := range existing {
+		relation := CompareContexts(incoming.Context, existingVersion.Context)
+
+		switch relation {
+		case Older:
+			// Incoming version is stale; ignore it entirely
+			return
+
+		case Equal:
+			// Same version already exists; ignore duplicate
+			return
+
+		case Newer:
+			// Incoming supersedes this existing version, so don't keep old one
+			continue
+
+		case Concurrent:
+			// Keep existing sibling
+			newVersions = append(newVersions, existingVersion)
+		}
+	}
+
+	// Add incoming version after removing versions it superseded.
+	newVersions = append(newVersions, incoming)
+	s.Data[key] = newVersions
 }
 
 func IncrementContext(ctx Context, nodeID int) Context {
