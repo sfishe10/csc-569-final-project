@@ -24,6 +24,7 @@ const (
 	N              = 3 // how many nodes to replicate data on
 	W              = 2 // write quorum
 	R              = 2 // read quorum
+	QUORUM_TIMEOUT = 5 * time.Second
 )
 
 var self_node shared.Node
@@ -192,13 +193,13 @@ func handleBallots(server rpc.Client, id int) {
 	}
 }
 
-func handleCoordPutRequest(server rpc.Client, id int) {
+func handleCoordPutRequest(server rpc.Client, id int) bool {
 	var incomingCoordPutRequest shared.PutRequest
 
 	err := server.Call("Requests.ListenCoordPutRequest", id, &incomingCoordPutRequest)
 	if err != nil {
 		fmt.Println("Error reading coord put request:", err)
-		return
+		return false
 	}
 
 	if incomingCoordPutRequest.Key != "" {
@@ -210,8 +211,30 @@ func handleCoordPutRequest(server rpc.Client, id int) {
 		self_node.Store.Put(incomingCoordPutRequest.Key, obj_version)
 
 		// the request has already been sent to the replicas, so wait for W - 1 responses
-		// TODO
+		deadline := time.After(QUORUM_TIMEOUT)
+		acks := 1 // coordinator counts itself
+
+		for acks < W {
+			select {
+			case <-deadline:
+				return false // write failed
+			default:
+				ack_ids := []int{}
+				err := server.Call("Requests.ListenReplicaPutResponses", id, &ack_ids)
+				if err != nil {
+					fmt.Println("Error listening for responses:", err)
+					return false
+				}
+
+				acks += len(ack_ids)
+
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		return true
 	}
+
+	return true
 }
 
 func handleReplicaPutRequest(server rpc.Client, id int) {
@@ -232,7 +255,12 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 		self_node.Store.Put(incomingReplicaPutRequest.Key, obj_version)
 
 		// send a response so the coordinator knows it was written
-		// TODO
+		var reply bool
+		err = server.Call("Requests.RespondToPutRequest", id, &reply)
+		if err != nil {
+			fmt.Println("Error responding to put request:", err)
+			return
+		}
 	}
 }
 

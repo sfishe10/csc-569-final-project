@@ -293,11 +293,6 @@ type PutRequest struct {
 	Context  Context
 }
 
-type PutResponse struct {
-	ID      int
-	Success bool
-}
-
 type ObjectVersion struct {
 	Object  string
 	Context Context
@@ -385,6 +380,14 @@ func (req *Requests) ListenReplicaPutRequest(coord_id int, reply *PutRequest) er
 	putReq := req.PendingReplicaPutRequest[coord_id]
 
 	*reply = putReq
+
+	return nil
+}
+
+func (req *Requests) RespondToPutRequest(replica_id int, reply *bool) error {
+	req.ReplicaPutResponses = append(req.ReplicaPutResponses, replica_id)
+
+	*reply = true
 
 	return nil
 }
