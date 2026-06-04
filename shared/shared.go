@@ -420,6 +420,9 @@ func IncrementContext(ctx Context, nodeID int) Context {
 }
 
 func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
+	// first clear out any old responses from the last put request
+	req.ReplicaPutResponses = []int{}
+
 	coordinator_node := req.FindCoordinator(HashString(putReq.Key))
 	coord_id := coordinator_node.NodeID
 
@@ -487,6 +490,10 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 }
 
 func (req *Requests) SendGetRequest(key string, reply *bool) error {
+	// first clear out any leftover results from the last get request
+	req.ReplicaGetResponses = []GetResponse{}
+	req.GetResults = []ObjectVersion{}
+
 	coordinator_node := req.FindCoordinator(HashString(key))
 	coord_id := coordinator_node.NodeID
 
