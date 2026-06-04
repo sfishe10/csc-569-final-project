@@ -456,13 +456,13 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 	return nil
 }
 
-func (req *Requests) ListenReplicaPutRequest(coord_id int, reply *PutRequest) error {
-	putReq := req.PendingReplicaPutRequest[coord_id]
+func (req *Requests) ListenReplicaPutRequest(replica_id int, reply *PutRequest) error {
+	putReq := req.PendingReplicaPutRequest[replica_id]
 
 	*reply = putReq
 
 	// consume the request
-	delete(req.PendingReplicaPutRequest, coord_id)
+	delete(req.PendingReplicaPutRequest, replica_id)
 
 	return nil
 }
@@ -548,13 +548,13 @@ func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
 	return nil
 }
 
-func (req *Requests) ListenReplicaGetRequest(coord_id int, reply *string) error {
-	getReq := req.PendingReplicaGetRequest[coord_id]
+func (req *Requests) ListenReplicaGetRequest(replica_id int, reply *string) error {
+	getReq := req.PendingReplicaGetRequest[replica_id]
 
 	*reply = getReq
 
 	// consume the request
-	delete(req.PendingReplicaGetRequest, coord_id)
+	delete(req.PendingReplicaGetRequest, replica_id)
 
 	return nil
 }
