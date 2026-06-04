@@ -180,9 +180,7 @@ func handleCoordGetRequest(server rpc.Client, id int) bool {
 	finalVersions := collected.Data[key]
 
 	fmt.Printf("GET %s returned %d version(s):\n", key, len(finalVersions))
-	for _, version := range finalVersions {
-		fmt.Printf("  value=%v context=%v\n", version.Object, version.Context)
-	}
+	shared.PrintVersions(finalVersions)
 
 	var reply bool
 	err = server.Call("Requests.SendGetResultsToClient", finalVersions, &reply)

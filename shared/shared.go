@@ -8,6 +8,7 @@ import (
 	"maps"
 	"math/rand"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -209,6 +210,23 @@ type ObjectVersion struct {
 
 type Context struct {
 	VectorClock map[int]int
+}
+
+func (c Context) String() string {
+	var parts []string
+
+	ids := make([]int, 0, len(c.VectorClock))
+	for id := range c.VectorClock {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+
+	for _, id := range ids {
+		parts = append(parts,
+			fmt.Sprintf("%d:%d", id, c.VectorClock[id]))
+	}
+
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 type Store struct {
@@ -496,4 +514,15 @@ func (req *Requests) FindCoordinator(hash uint64) RingEntry {
 	}
 
 	return req.Ring[0] // wrap around
+}
+
+func PrintVersions(versions []ObjectVersion) {
+	for i, version := range versions {
+		fmt.Printf(
+			"[%d] value=%q clock=%s\n",
+			i+1,
+			version.Object,
+			version.Context,
+		)
+	}
 }

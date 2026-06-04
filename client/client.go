@@ -84,14 +84,23 @@ func main() {
 		args := strings.Fields(cmd)
 
 		if strings.Contains(strings.ToLower(args[0]), "get") {
+			if len(args) < 2 {
+				fmt.Println("Usage: GET <key>")
+				continue
+			}
 			key := args[1]
 			result := get(*server, key)
 
-			fmt.Printf("%v\n", result)
+			shared.PrintVersions(result)
 			continue
 		}
 
 		if strings.Contains(strings.ToLower(args[0]), "put") {
+			if len(args) < 3 {
+				fmt.Println("Usage: PUT <key> <value>")
+				continue
+			}
+
 			key := args[1]
 			obj := args[2]
 
