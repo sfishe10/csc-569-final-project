@@ -118,7 +118,7 @@ type Requests struct {
 	PendingReplicaPutRequest map[int]PutRequest
 	ReplicaPutResponses      []int
 	ReplicaGetResponses      []GetResponse
-	GetResults               []GetResponse
+	GetResults               []ObjectVersion
 	Ring                     []RingEntry
 }
 
@@ -147,7 +147,7 @@ func NewRequests() *Requests {
 		PendingReplicaPutRequest: make(map[int]PutRequest),
 		ReplicaPutResponses:      []int{},
 		ReplicaGetResponses:      []GetResponse{},
-		GetResults:               []GetResponse{},
+		GetResults:               []ObjectVersion{},
 		Ring:                     Ring,
 	}
 }
@@ -505,8 +505,10 @@ func (req *Requests) RespondToGetRequest(resp GetResponse, reply *bool) error {
 	return nil
 }
 
-func (req *Requests) SendGetResultsToClient(results []GetResponse, reply *bool) error {
+func (req *Requests) SendGetResultsToClient(results []ObjectVersion, reply *bool) error {
 	req.GetResults = results
+
+	fmt.Printf("Sending results to client: %v\n", results)
 
 	*reply = true
 
@@ -516,18 +518,10 @@ func (req *Requests) SendGetResultsToClient(results []GetResponse, reply *bool) 
 func (req *Requests) ListenGetResults(key string, reply *[]ObjectVersion) error {
 	results := req.GetResults
 
-	versions := []ObjectVersion{}
-
-	for _, res := range results {
-		for _, version := range res.Versions {
-			versions = append(versions, version)
-		}
-	}
-
-	*reply = versions
+	*reply = results
 
 	// consume the results
-	req.GetResults = []GetResponse{}
+	req.GetResults = []ObjectVersion{}
 
 	return nil
 }

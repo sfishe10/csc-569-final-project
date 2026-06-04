@@ -471,7 +471,7 @@ func runAfterY(server *rpc.Client, neighbors [2]int, membership **shared.Members
 
 	// read incoming messages
 	*membership = readMessages(*server, id, **membership)
-	printMembership(**membership)
+	// printMembership(**membership)
 
 	// send table to neighbors
 	sendMessage(*server, neighbors[0], **membership)
