@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -100,6 +101,7 @@ type MembershipRequest struct {
 
 // Requests struct represents pending message requests
 type Requests struct {
+	mu                       sync.Mutex
 	PendingMemberships       map[int][]MembershipRequest
 	PendingCoordGetRequest   map[int]string
 	PendingReplicaGetRequest map[int]string
@@ -140,6 +142,9 @@ func NewRequests() *Requests {
 }
 
 func (req *Requests) AddMembership(payload MembershipRequest, reply *bool) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	req.PendingMemberships[payload.ID] = append(req.PendingMemberships[payload.ID], payload)
 	*reply = true
 	return nil
@@ -147,6 +152,9 @@ func (req *Requests) AddMembership(payload MembershipRequest, reply *bool) error
 
 // Listens to communication from neighboring nodes.
 func (req *Requests) ListenMemberships(ID int, reply *[]MembershipRequest) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	// Check if there's a pending message for this node
 	if requests, exists := req.PendingMemberships[ID]; exists {
 		*reply = requests
@@ -335,6 +343,9 @@ func IncrementContext(ctx Context, nodeID int) Context {
 }
 
 func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	// first clear out any old responses from the last put request
 	req.ReplicaPutResponses = []int{}
 
@@ -349,6 +360,9 @@ func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
 }
 
 func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	putReq := req.PendingCoordPutRequest[coord_id]
 
 	// there are no pending requests
@@ -375,6 +389,9 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 }
 
 func (req *Requests) ListenReplicaPutRequest(replica_id int, reply *PutRequest) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	putReq := req.PendingReplicaPutRequest[replica_id]
 
 	*reply = putReq
@@ -405,6 +422,9 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 }
 
 func (req *Requests) SendGetRequest(key string, reply *bool) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	// first clear out any leftover results from the last get request
 	req.ReplicaGetResponses = []GetResponse{}
 	req.GetResults = []ObjectVersion{}
@@ -449,6 +469,9 @@ func (req *Requests) ListenGetResults(key string, reply *[]ObjectVersion) error 
 }
 
 func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	getReq := req.PendingCoordGetRequest[coord_id]
 
 	// there are no pending requests
@@ -471,6 +494,9 @@ func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
 }
 
 func (req *Requests) ListenReplicaGetRequest(replica_id int, reply *string) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
 	getReq := req.PendingReplicaGetRequest[replica_id]
 
 	*reply = getReq
