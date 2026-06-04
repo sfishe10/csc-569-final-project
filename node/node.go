@@ -29,80 +29,6 @@ const (
 
 var self_node shared.Node
 
-var candidate_timer *time.Timer
-
-// track whether this node has voted in this term
-var voted bool = false
-
-func resetCandidateTimer(server rpc.Client) {
-	// wait at least 10 seconds to start holding elections (so I have time to start all the client processes)
-	timeout := time.Duration(10000+rand.Intn(5001)) * time.Millisecond
-
-	if candidate_timer != nil {
-		candidate_timer.Stop()
-	}
-
-	candidate_timer = time.AfterFunc(timeout, func() {
-		if !voted {
-			self_node.Role = ROLE_CANDIDATE
-			voted = true
-
-			holdElection(server)
-		}
-	})
-}
-
-func holdElection(server rpc.Client) {
-	fmt.Printf("Holding election for Node %d\n", self_node.ID)
-
-	// vote for self
-	var ballot = shared.NewBallot(self_node.ID)
-	ballot.VoteYes()
-
-	var reply bool
-
-	// request votes from other nodes
-	err := server.Call("Requests.SendBallot", ballot, &reply)
-	if err != nil {
-		fmt.Println("Error sending ballot:", err)
-	}
-
-	// wait to receive votes, then count
-	time.AfterFunc(time.Second*VOTE_TIME, func() {
-		var responses []shared.VoteResponse
-
-		// Check for votes
-		err := server.Call("Requests.ListenVoteResponses", self_node.ID, &responses)
-		if err != nil {
-			fmt.Println("Error listening for votes:", err)
-		}
-
-		for _, vote := range responses {
-			if vote.Granted {
-				ballot.VoteYes()
-			} else {
-				ballot.VoteNo()
-			}
-		}
-
-		fmt.Printf("BALLOT: Yes(%d)\tNo(%d)\n", ballot.YesCount, ballot.NoCount)
-		if ballot.HasMajority() {
-			fmt.Printf("Node %d is now Leader\n", self_node.ID)
-			self_node.Role = ROLE_LEADER
-		} else if ballot.IsTie() {
-			fmt.Printf("Election resulted in a tie\n")
-			// wait a random amount of time and hold elections again
-			waitTime := time.Duration(150+rand.Intn(151)) * time.Millisecond
-			time.AfterFunc(waitTime, func() {
-				holdElection(server)
-			})
-		} else {
-			fmt.Printf("Node %d lost the election\n", self_node.ID)
-			self_node.Role = ROLE_FOLLOWER
-		}
-	})
-}
-
 // Send the current membership table to a neighboring node with the provided ID
 func sendMessage(server rpc.Client, id int, membership shared.Membership) {
 	request := shared.MembershipRequest{
@@ -144,53 +70,10 @@ func handleMemberships(server rpc.Client, id int, membership shared.Membership) 
 			node.Alive = false
 			var reply shared.Node
 			updated.Update(node, &reply)
-
-			// if the leader has died and we haven't already voted for a candidate, become a candidate
-			if node.Role == ROLE_LEADER && !voted {
-				self_node.Role = ROLE_CANDIDATE
-
-				holdElection(server)
-			}
-		} else {
-			if node.Role == ROLE_LEADER {
-				resetCandidateTimer(server)
-			}
 		}
 	}
 
 	return updated
-}
-
-func handleBallots(server rpc.Client, id int) {
-	var incomingBallots []shared.Ballot
-
-	err := server.Call("Requests.ListenBallots", id, &incomingBallots)
-	if err != nil {
-		fmt.Println("Error reading ballot messages:", err)
-		return
-	}
-
-	for _, request := range incomingBallots {
-		if !voted {
-			fmt.Printf("Node %d voted Yes for Node %d\n", self_node.ID, request.NodeID)
-			response := shared.VoteResponse{
-				CandidateID: request.NodeID,
-				Granted:     true,
-			}
-			var reply bool
-			server.Call("Requests.AddVote", response, &reply)
-			voted = true
-		} else {
-			fmt.Printf("Node %d voted No for Node %d\n", self_node.ID, request.NodeID)
-			response := shared.VoteResponse{
-				CandidateID: request.NodeID,
-				Granted:     false,
-			}
-			var reply bool
-			server.Call("Requests.AddVote", response, &reply)
-			request.VoteNo()
-		}
-	}
 }
 
 func handleCoordPutRequest(server rpc.Client, id int) bool {
@@ -377,7 +260,6 @@ func handleReplicaGetRequest(server rpc.Client, id int) {
 func readMessages(server rpc.Client, id int, membership shared.Membership) *shared.Membership {
 	updatedMembership := handleMemberships(server, id, membership)
 
-	handleBallots(server, id)
 	handleCoordPutRequest(server, id)
 	handleReplicaPutRequest(server, id)
 	handleCoordGetRequest(server, id)
@@ -425,9 +307,6 @@ func main() {
 	} else {
 		fmt.Printf("Success: Node created with id= %d\n", id)
 	}
-
-	// start the countdown to when this node will become a candidate
-	resetCandidateTimer(*server)
 
 	neighbors := self_node.InitializeNeighbors(id)
 	fmt.Println("Neighbors:", neighbors)

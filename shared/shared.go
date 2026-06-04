@@ -97,21 +97,9 @@ type MembershipRequest struct {
 	Table Membership
 }
 
-type BallotRequest struct {
-	ID     int
-	Ballot Ballot
-}
-
-type VoteResponse struct {
-	CandidateID int
-	Granted     bool
-}
-
 // Requests struct represents pending message requests
 type Requests struct {
 	PendingMemberships       map[int][]MembershipRequest
-	PendingBallots           map[int][]BallotRequest
-	PendingVotes             map[int][]VoteResponse
 	PendingCoordGetRequest   map[int]string
 	PendingReplicaGetRequest map[int]string
 	PendingCoordPutRequest   map[int]PutRequest
@@ -139,8 +127,6 @@ func NewRequests() *Requests {
 
 	return &Requests{
 		PendingMemberships:       make(map[int][]MembershipRequest),
-		PendingBallots:           make(map[int][]BallotRequest),
-		PendingVotes:             make(map[int][]VoteResponse),
 		PendingCoordGetRequest:   make(map[int]string),
 		PendingReplicaGetRequest: make(map[int]string),
 		PendingCoordPutRequest:   make(map[int]PutRequest),
@@ -158,18 +144,6 @@ func (req *Requests) AddMembership(payload MembershipRequest, reply *bool) error
 	return nil
 }
 
-func (req *Requests) AddBallot(payload BallotRequest, reply *bool) error {
-	req.PendingBallots[payload.ID] = append(req.PendingBallots[payload.ID], payload)
-	*reply = true
-	return nil
-}
-
-func (req *Requests) AddVote(payload VoteResponse, reply *bool) error {
-	req.PendingVotes[payload.CandidateID] = append(req.PendingVotes[payload.CandidateID], payload)
-	*reply = true
-	return nil
-}
-
 // Listens to communication from neighboring nodes.
 func (req *Requests) ListenMemberships(ID int, reply *[]MembershipRequest) error {
 	// Check if there's a pending message for this node
@@ -179,40 +153,6 @@ func (req *Requests) ListenMemberships(ID int, reply *[]MembershipRequest) error
 	} else {
 		// No message - return empty array
 		*reply = []MembershipRequest{}
-	}
-	return nil
-}
-
-// checks for ballot requests
-func (req *Requests) ListenBallots(ID int, reply *[]Ballot) error {
-	// Check if there's a pending message for this node
-	if requests, exists := req.PendingBallots[ID]; exists {
-		var ballots []Ballot
-		for _, ballot := range requests {
-			ballots = append(ballots, ballot.Ballot)
-		}
-		*reply = ballots
-		delete(req.PendingBallots, ID) // consume the message
-	} else {
-		// No message - return empty array
-		*reply = []Ballot{}
-	}
-	return nil
-}
-
-// checks for vote responses
-func (req *Requests) ListenVoteResponses(ID int, reply *[]VoteResponse) error {
-	// Check if there's pending votes for this node
-	if votes, exists := req.PendingVotes[ID]; exists {
-		var responses []VoteResponse
-		for _, vote := range votes {
-			responses = append(responses, vote)
-		}
-		*reply = responses
-		delete(req.PendingVotes, ID) // consume the message
-	} else {
-		// No message - return empty array
-		*reply = []VoteResponse{}
 	}
 	return nil
 }
@@ -245,49 +185,6 @@ func CombineTables(table1 *Membership, table2 *Membership) *Membership {
 	}
 
 	return newMembership
-}
-
-/*---------------*/
-
-type Ballot struct {
-	NodeID   int
-	YesCount int
-	NoCount  int
-}
-
-func NewBallot(nodeId int) *Ballot {
-	return &Ballot{
-		NodeID:   nodeId,
-		YesCount: 0,
-		NoCount:  0,
-	}
-}
-
-func (ballot *Ballot) VoteYes() {
-	ballot.YesCount += 1
-}
-
-func (ballot *Ballot) VoteNo() {
-	ballot.NoCount += 1
-}
-
-func (ballot *Ballot) HasMajority() bool {
-	return ballot.YesCount > MAX_NODES/2
-}
-
-func (ballot *Ballot) IsTie() bool {
-	return ballot.YesCount == ballot.NoCount
-}
-
-func (m *Requests) SendBallot(payload Ballot, reply *bool) error {
-	for id := 1; id <= MAX_NODES; id++ {
-		if id != payload.NodeID {
-			var reply bool
-			m.AddBallot(BallotRequest{ID: id, Ballot: payload}, &reply)
-		}
-	}
-
-	return nil
 }
 
 /*---------------*/
