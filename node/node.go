@@ -202,59 +202,66 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 		return false
 	}
 
-	if incomingCoordPutRequest.Key != "" {
-		// write locally
-		obj_version := shared.ObjectVersion{
-			Object:  incomingCoordPutRequest.Object,
-			Context: incomingCoordPutRequest.Context,
-		}
-		self_node.Store.Put(incomingCoordPutRequest.Key, obj_version)
-
-		// the request has already been sent to the replicas, so wait for W - 1 responses
-		deadline := time.After(QUORUM_TIMEOUT)
-		acks := 1 // coordinator counts itself
-
-		for acks < W {
-			select {
-			case <-deadline:
-				return false // write failed
-			default:
-				ack_ids := []int{}
-				err := server.Call("Requests.ListenReplicaPutResponses", id, &ack_ids)
-				if err != nil {
-					fmt.Println("Error listening for responses:", err)
-					return false
-				}
-
-				acks += len(ack_ids)
-
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
+	if incomingCoordPutRequest.Key == "" {
 		return true
 	}
+
+	fmt.Printf("COORD PUT REQUEST: %v -> %v\n", incomingCoordPutRequest.Key, incomingCoordPutRequest.Object)
+
+	// write locally
+	obj_version := shared.ObjectVersion{
+		Object:  incomingCoordPutRequest.Object,
+		Context: incomingCoordPutRequest.Context,
+	}
+	self_node.Store.Put(incomingCoordPutRequest.Key, obj_version)
+
+	// the request has already been sent to the replicas, so wait for W - 1 responses
+	deadline := time.After(QUORUM_TIMEOUT)
+	acks := 1 // coordinator counts itself
+
+	for acks < W {
+		select {
+		case <-deadline:
+			fmt.Printf("WRITE FAILED: %v\n", incomingCoordPutRequest.Key)
+			return false // write failed
+		default:
+			ack_ids := []int{}
+			err := server.Call("Requests.ListenReplicaPutResponses", id, &ack_ids)
+			if err != nil {
+				fmt.Println("Error listening for responses:", err)
+				return false
+			}
+
+			acks += len(ack_ids)
+
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	fmt.Printf("PUT SUCCESSFUL: %v\n", incomingCoordPutRequest.Key)
 
 	return true
 }
 
 func handleCoordGetRequest(server rpc.Client, id int) bool {
-	var incomingKey string
+	var key string
 
-	err := server.Call("Requests.ListenCoordGetRequest", id, &incomingKey)
+	err := server.Call("Requests.ListenCoordGetRequest", id, &key)
 	if err != nil {
 		fmt.Println("Error reading coord get request:", err)
 		return false
 	}
 
-	if incomingKey == "" {
+	if key == "" {
 		return true
 	}
+
+	fmt.Printf("COORD GET REQUEST: %v\n", key)
 
 	// Collect coordinator's local versions first.
 	collected := shared.NewStore()
 
-	for _, version := range self_node.Store.Data[incomingKey] {
-		collected.Put(incomingKey, version)
+	for _, version := range self_node.Store.Data[key] {
+		collected.Put(key, version)
 	}
 
 	// the request has already been sent to the replicas, so wait for R - 1 responses
@@ -264,23 +271,42 @@ func handleCoordGetRequest(server rpc.Client, id int) bool {
 	for acks < R {
 		select {
 		case <-deadline:
-			return false // read failed
+			fmt.Println("GET FAILED")
+			return false
 		default:
-			response := []shared.GetResponse{}
-			err := server.Call("Requests.ListenReplicaGetResponses", id, &response)
+			responses := []shared.GetResponse{}
+			err = server.Call("Requests.ListenReplicaGetResponses", id, &responses)
 			if err != nil {
 				fmt.Println("Error listening for responses:", err)
 				return false
 			}
 
-			acks += len(response)
+			acks += len(responses)
+
+			for _, response := range responses {
+				for _, version := range response.Versions {
+					collected.Put(key, version)
+				}
+			}
 
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
-	// send all the collected replicas back to the client
-	// todo
+	// send all the collected versions back to the client
+	finalVersions := collected.Data[key]
+
+	fmt.Printf("GET %s returned %d version(s):\n", key, len(finalVersions))
+	for _, version := range finalVersions {
+		fmt.Printf("  value=%v context=%v\n", version.Object, version.Context)
+	}
+
+	var reply bool
+	err = server.Call("Requests.SendGetResultsToClient", finalVersions, &reply)
+	if err != nil {
+		fmt.Println("Error sending results to client:", err)
+		return false
+	}
 
 	return true
 }
@@ -298,6 +324,8 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 		return
 	}
 
+	fmt.Printf("REPLICATING: %v -> %v\n", incomingReplicaPutRequest.Key, incomingReplicaPutRequest.Object)
+
 	// write locally
 	obj_version := shared.ObjectVersion{
 		Object:  incomingReplicaPutRequest.Object,
@@ -307,7 +335,7 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 
 	// send a response so the coordinator knows it was written
 	var reply bool
-	err = server.Call("Requests.RespondToGetRequest", id, &reply)
+	err = server.Call("Requests.RespondToPutRequest", id, &reply)
 	if err != nil {
 		fmt.Println("Error responding to get request:", err)
 		return
@@ -315,15 +343,14 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 }
 
 func handleReplicaGetRequest(server rpc.Client, id int) {
-	var incomingReplicaGetRequest shared.PutRequest
+	var key string
 
-	err := server.Call("Requests.ListenReplicaGetRequest", id, &incomingReplicaGetRequest)
+	err := server.Call("Requests.ListenReplicaGetRequest", id, &key)
 	if err != nil {
 		fmt.Println("Error reading replica get request:", err)
 		return
 	}
 
-	key := incomingReplicaGetRequest.Key
 	if key == "" {
 		return
 	}
@@ -334,6 +361,8 @@ func handleReplicaGetRequest(server rpc.Client, id int) {
 		Key:        key,
 		Versions:   localVersions,
 	}
+
+	fmt.Printf("SENDING GET RESPONSE TO COORD: %v\n", resp)
 
 	// send local versions to the coordinator
 	var reply bool
@@ -365,7 +394,7 @@ var wg = &sync.WaitGroup{}
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
-	Z_TIME := rand.Intn(Z_TIME_MAX-Z_TIME_MIN) + Z_TIME_MIN
+	// Z_TIME := rand.Intn(Z_TIME_MAX-Z_TIME_MIN) + Z_TIME_MIN
 
 	// Connect to RPC server
 	server, _ := rpc.DialHTTP("tcp", "localhost:9005")
@@ -382,7 +411,7 @@ func main() {
 		fmt.Println("Found Error", err)
 	}
 
-	fmt.Println("Node", id, "will fail after", Z_TIME, "seconds")
+	// fmt.Println("Node", id, "will fail after", Z_TIME, "seconds")
 
 	currTime := calcTime()
 	// Construct self
@@ -412,7 +441,7 @@ func main() {
 
 	time.AfterFunc(time.Second*X_TIME, func() { runAfterX(server, &self_node, &membership, id) })
 	time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, &membership, id) })
-	time.AfterFunc(time.Second*time.Duration(Z_TIME), func() { runAfterZ(server, id) })
+	// time.AfterFunc(time.Second*time.Duration(Z_TIME), func() { runAfterZ(server, id) })
 
 	wg.Add(1)
 	wg.Wait()

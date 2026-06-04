@@ -118,6 +118,7 @@ type Requests struct {
 	PendingReplicaPutRequest map[int]PutRequest
 	ReplicaPutResponses      []int
 	ReplicaGetResponses      []GetResponse
+	GetResults               []GetResponse
 	Ring                     []RingEntry
 }
 
@@ -146,6 +147,7 @@ func NewRequests() *Requests {
 		PendingReplicaPutRequest: make(map[int]PutRequest),
 		ReplicaPutResponses:      []int{},
 		ReplicaGetResponses:      []GetResponse{},
+		GetResults:               []GetResponse{},
 		Ring:                     Ring,
 	}
 }
@@ -441,8 +443,8 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 	putReq.Context = new_context
 
 	// send it to the replicas
-	for i := range N {
-		id := (coord_id + i) % MAX_NODES // wrap around
+	for i := 1; i <= N; i++ {
+		id := ((coord_id + i - 1) % MAX_NODES) + 1 // wrap around
 		req.PendingReplicaPutRequest[id] = putReq
 	}
 
@@ -484,11 +486,13 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 	return nil
 }
 
-func (req *Requests) SendGetRequest(key string, reply *ObjectVersion) error {
+func (req *Requests) SendGetRequest(key string, reply *bool) error {
 	coordinator_node := req.FindCoordinator(HashString(key))
 	coord_id := coordinator_node.NodeID
 
 	req.PendingCoordGetRequest[coord_id] = key
+
+	*reply = true
 
 	return nil
 }
@@ -497,6 +501,77 @@ func (req *Requests) RespondToGetRequest(resp GetResponse, reply *bool) error {
 	req.ReplicaGetResponses = append(req.ReplicaGetResponses, resp)
 
 	*reply = true
+
+	return nil
+}
+
+func (req *Requests) SendGetResultsToClient(results []GetResponse, reply *bool) error {
+	req.GetResults = results
+
+	*reply = true
+
+	return nil
+}
+
+func (req *Requests) ListenGetResults(key string, reply *[]ObjectVersion) error {
+	results := req.GetResults
+
+	versions := []ObjectVersion{}
+
+	for _, res := range results {
+		for _, version := range res.Versions {
+			versions = append(versions, version)
+		}
+	}
+
+	*reply = versions
+
+	// consume the results
+	req.GetResults = []GetResponse{}
+
+	return nil
+}
+
+func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
+	getReq := req.PendingCoordGetRequest[coord_id]
+
+	// there are no pending requests
+	if getReq == "" {
+		return nil
+	}
+
+	// send it to the replicas
+	for i := 1; i <= N; i++ {
+		id := ((coord_id + i - 1) % MAX_NODES) + 1 // wrap around
+		req.PendingReplicaGetRequest[id] = getReq
+	}
+
+	*reply = getReq
+
+	// consume the request
+	delete(req.PendingCoordGetRequest, coord_id)
+
+	return nil
+}
+
+func (req *Requests) ListenReplicaGetRequest(coord_id int, reply *string) error {
+	getReq := req.PendingReplicaGetRequest[coord_id]
+
+	*reply = getReq
+
+	// consume the request
+	delete(req.PendingReplicaGetRequest, coord_id)
+
+	return nil
+}
+
+func (req *Requests) ListenReplicaGetResponses(coord_id int, reply *[]GetResponse) error {
+	responses := req.ReplicaGetResponses
+
+	*reply = responses
+
+	// consume the response
+	req.ReplicaGetResponses = []GetResponse{}
 
 	return nil
 }

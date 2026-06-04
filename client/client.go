@@ -7,7 +7,10 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
+	"time"
 )
+
+const QUORUM_TIMEOUT = 15 * time.Second
 
 var contexts = make(map[string]shared.Context)
 
@@ -27,16 +30,33 @@ func put(server rpc.Client, key string, data string) {
 
 }
 
-func get(server rpc.Client, key string) shared.ObjectVersion {
-	var reply shared.ObjectVersion
+func get(server rpc.Client, key string) []shared.ObjectVersion {
+	var reply bool
 	err := server.Call("Requests.SendGetRequest", key, &reply)
 	if err != nil {
 		fmt.Println("Error sending Get request:", err)
 	}
 
 	// wait for the response
+	deadline := time.After(QUORUM_TIMEOUT)
+	var res []shared.ObjectVersion
+	for len(res) == 0 {
+		select {
+		case <-deadline:
+			fmt.Println("GET FAILED")
+			return res
+		default:
+			err = server.Call("Requests.ListenGetResults", key, &res)
+			if err != nil {
+				fmt.Println("Error listening for results:", err)
+				return res
+			}
 
-	return reply
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	return res
 }
 
 func main() {
@@ -46,7 +66,7 @@ func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Println("Usage:\nPUT <key> <obj>\nGET<key>")
+	fmt.Println("Usage:\nPUT <key> <obj>\nGET <key>")
 
 	for {
 		fmt.Print("> ")
@@ -77,7 +97,7 @@ func main() {
 
 			put(*server, key, obj)
 
-			fmt.Println("")
+			fmt.Println("PUT successful")
 			continue
 		}
 	}
