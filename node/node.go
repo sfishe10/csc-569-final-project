@@ -299,6 +299,7 @@ func handleCoordGetRequest(server rpc.Client, id int) bool {
 	// the request has already been sent to the replicas, so wait for R - 1 responses
 	deadline := time.After(QUORUM_TIMEOUT)
 	acks := 1 // coordinator counts itself
+	ack_ids := []int{}
 
 	for acks < R {
 		select {
@@ -314,8 +315,9 @@ func handleCoordGetRequest(server rpc.Client, id int) bool {
 			}
 
 			acks += len(responses)
-
 			for _, response := range responses {
+				ack_ids = append(ack_ids, response.FromNodeID)
+
 				for _, version := range response.Versions {
 					collected.Put(key, version)
 				}
@@ -336,6 +338,57 @@ func handleCoordGetRequest(server rpc.Client, id int) bool {
 	if err != nil {
 		fmt.Println("Error sending results to client:", err)
 		return false
+	}
+
+	// continue checking for the rest of the responses
+	deadline = time.After(time.Second * 5)
+	for acks <= N {
+		select {
+		case <-deadline:
+			// One of the nodes is down
+			failedNodeId := findFailedNode(ack_ids)
+			// mark this node as dead
+			markNodeAsDead(failedNodeId)
+
+			// find the next available node
+			subNodeId := findNextHealthyNode()
+
+			if subNodeId == -1 {
+				// no healthy node was found
+				fmt.Printf("Node %d is down. No substitute node found.", failedNodeId)
+				return false
+			}
+
+			// check the next healthy node
+			fmt.Printf("Node %d is down. Requesting data from Node %d instead.\n", failedNodeId, subNodeId)
+			getReq := shared.GetRequest{TargetID: failedNodeId, SubID: subNodeId, Key: key}
+
+			var reply bool
+			err := server.Call("Requests.SendGetRequest", getReq, &reply)
+			if err != nil {
+				fmt.Println("Error sending Put request:", err)
+			}
+
+			return false
+		default:
+			responses := []shared.GetResponse{}
+			err := server.Call("Requests.ListenReplicaGetResponses", id, &responses)
+			if err != nil {
+				fmt.Println("Error listening for responses:", err)
+				return false
+			}
+
+			acks += len(responses)
+			for _, response := range responses {
+				ack_ids = append(ack_ids, response.FromNodeID)
+
+				for _, version := range response.Versions {
+					collected.Put(key, version)
+				}
+			}
+
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	return true
@@ -395,15 +448,43 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 }
 
 func handleReplicaGetRequest(server rpc.Client, id int) {
-	var key string
+	var getReq shared.GetRequest
 
-	err := server.Call("Requests.ListenReplicaGetRequest", id, &key)
+	err := server.Call("Requests.ListenReplicaGetRequest", id, &getReq)
 	if err != nil {
 		fmt.Println("Error reading replica get request:", err)
 		return
 	}
 
+	key := getReq.Key
+
 	if key == "" {
+		return
+	}
+
+	if getReq.SubID != -1 {
+		// the intended replica node is down, so this node is being used as substitute
+		localVersions := self_node.Store.Hints[getReq.TargetID][key]
+
+		if len(localVersions) == 0 {
+			return
+		}
+
+		resp := shared.GetResponse{
+			FromNodeID: id,
+			Key:        key,
+			Versions:   localVersions,
+		}
+		fmt.Printf("SENDING TEMPORARY DATA TO COORD: %v\n", resp)
+
+		// send local versions to the coordinator
+		var reply bool
+		err = server.Call("Requests.RespondToGetRequest", resp, &reply)
+		if err != nil {
+			fmt.Println("Error responding to get request:", err)
+			return
+		}
+
 		return
 	}
 

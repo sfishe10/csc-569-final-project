@@ -59,8 +59,10 @@ func put(server rpc.Client, key string, data string) bool {
 }
 
 func get(server rpc.Client, key string) []shared.ObjectVersion {
+	getReq := shared.GetRequest{TargetID: -1, SubID: -1, Key: key}
+
 	var reply bool
-	err := server.Call("Requests.SendGetRequest", key, &reply)
+	err := server.Call("Requests.SendGetRequest", getReq, &reply)
 	if err != nil {
 		fmt.Println("Error sending Get request:", err)
 	}

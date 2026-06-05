@@ -116,8 +116,8 @@ type MembershipRequest struct {
 type Requests struct {
 	mu                       sync.Mutex
 	PendingMemberships       map[int][]MembershipRequest
-	PendingCoordGetRequest   map[int]string
-	PendingReplicaGetRequest map[int]string
+	PendingCoordGetRequest   map[int]GetRequest
+	PendingReplicaGetRequest map[int]GetRequest
 	PendingCoordPutRequest   map[int]PutRequest
 	PendingReplicaPutRequest map[int]PutRequest
 	ReplicaPutResponses      []int
@@ -145,8 +145,8 @@ func NewRequests() *Requests {
 
 	return &Requests{
 		PendingMemberships:       make(map[int][]MembershipRequest),
-		PendingCoordGetRequest:   make(map[int]string),
-		PendingReplicaGetRequest: make(map[int]string),
+		PendingCoordGetRequest:   make(map[int]GetRequest),
+		PendingReplicaGetRequest: make(map[int]GetRequest),
 		PendingCoordPutRequest:   make(map[int]PutRequest),
 		PendingReplicaPutRequest: make(map[int]PutRequest),
 		ReplicaPutResponses:      []int{},
@@ -233,6 +233,13 @@ type DataTransfer struct {
 	// the revived node that is receiveing the data
 	TargetID int
 	Data     map[string][]ObjectVersion
+}
+
+type GetRequest struct {
+	// only used if the request was intended for a different node
+	TargetID int
+	SubID    int
+	Key      string
 }
 
 type GetResponse struct {
@@ -530,7 +537,7 @@ func (req *Requests) SendPutResultToClient(result Context, reply *bool) error {
 	return nil
 }
 
-func (req *Requests) SendGetRequest(key string, reply *bool) error {
+func (req *Requests) SendGetRequest(getReq GetRequest, reply *bool) error {
 	req.mu.Lock()
 	defer req.mu.Unlock()
 
@@ -538,10 +545,16 @@ func (req *Requests) SendGetRequest(key string, reply *bool) error {
 	req.ReplicaGetResponses = []GetResponse{}
 	req.GetResults = []ObjectVersion{}
 
-	coordinator_node := req.FindCoordinator(HashString(key))
+	if getReq.SubID != -1 {
+		// the request is being sent to a substitute node (hinted handoff)
+		req.PendingReplicaGetRequest[getReq.SubID] = getReq
+		return nil
+	}
+
+	coordinator_node := req.FindCoordinator(HashString(getReq.Key))
 	coord_id := coordinator_node.NodeID
 
-	req.PendingCoordGetRequest[coord_id] = key
+	req.PendingCoordGetRequest[coord_id] = getReq
 
 	*reply = true
 
@@ -595,7 +608,7 @@ func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
 	getReq := req.PendingCoordGetRequest[coord_id]
 
 	// there are no pending requests
-	if getReq == "" {
+	if getReq.Key == "" {
 		return nil
 	}
 
@@ -605,7 +618,7 @@ func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
 		req.PendingReplicaGetRequest[id] = getReq
 	}
 
-	*reply = getReq
+	*reply = getReq.Key
 
 	// consume the request
 	delete(req.PendingCoordGetRequest, coord_id)
@@ -613,7 +626,7 @@ func (req *Requests) ListenCoordGetRequest(coord_id int, reply *string) error {
 	return nil
 }
 
-func (req *Requests) ListenReplicaGetRequest(replica_id int, reply *string) error {
+func (req *Requests) ListenReplicaGetRequest(replica_id int, reply *GetRequest) error {
 	req.mu.Lock()
 	defer req.mu.Unlock()
 
