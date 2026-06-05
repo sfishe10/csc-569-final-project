@@ -240,7 +240,7 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 
 			if subNode == -1 {
 				// no healthy node was found
-				fmt.Println("No substitute node found.")
+				fmt.Printf("Node %d is down. No substitute node found.", failedNodeId)
 				return false
 			}
 
@@ -479,8 +479,12 @@ func checkForDataTransfers(server rpc.Client) {
 		return
 	}
 
-	for _, dt := range dataTransfers {
-		maps.Copy(self_node.Store.Data, dt.Data)
+	if len(dataTransfers) > 0 {
+		fmt.Println("Data transfer received.")
+
+		for _, dt := range dataTransfers {
+			maps.Copy(self_node.Store.Data, dt.Data)
+		}
 	}
 }
 
@@ -542,6 +546,9 @@ func main() {
 	time.AfterFunc(time.Second*X_TIME, func() { runAfterX(server, &self_node, &membership, id) })
 	time.AfterFunc(time.Second*Y_TIME, func() { runAfterY(server, neighbors, &membership, id) })
 	// time.AfterFunc(time.Second*time.Duration(Z_TIME), func() { runAfterZ(server, id) })
+
+	// wait a couple seconds, then check for any pending data transfers
+	time.AfterFunc(time.Second*3, func() { checkForDataTransfers(*server) })
 
 	wg.Add(1)
 	wg.Wait()
