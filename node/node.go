@@ -101,26 +101,45 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 	// the request has already been sent to the replicas, so wait for W - 1 responses
 	deadline := time.After(QUORUM_TIMEOUT)
 	acks := 1 // coordinator counts itself
+	ack_ids := []int{}
 
 	for acks < W {
 		select {
 		case <-deadline:
+			// write failed
 			fmt.Printf("WRITE FAILED: %v\n", incomingCoordPutRequest.Key)
-			return false // write failed
+			var reply bool
+			err := server.Call("Requests.SendPutResultToClient", false, &reply)
+
+			if err != nil {
+				fmt.Println("Error sending failure to client:", err)
+				return false
+			}
+
+			return false
 		default:
-			ack_ids := []int{}
-			err := server.Call("Requests.ListenReplicaPutResponses", id, &ack_ids)
+			temp_ack_ids := []int{}
+			err := server.Call("Requests.ListenReplicaPutResponses", id, &temp_ack_ids)
 			if err != nil {
 				fmt.Println("Error listening for responses:", err)
 				return false
 			}
 
-			acks += len(ack_ids)
+			acks += len(temp_ack_ids)
+			ack_ids = append(ack_ids, id)
 
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	fmt.Printf("PUT SUCCESSFUL: %v\n", incomingCoordPutRequest.Key)
+
+	var reply bool
+	err = server.Call("Requests.SendPutResultToClient", true, &reply)
+
+	if err != nil {
+		fmt.Println("Error sending success to client:", err)
+		return false
+	}
 
 	return true
 }

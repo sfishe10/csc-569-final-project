@@ -110,6 +110,7 @@ type Requests struct {
 	ReplicaPutResponses      []int
 	ReplicaGetResponses      []GetResponse
 	GetResults               []ObjectVersion
+	PutResult                bool
 	Ring                     []RingEntry
 }
 
@@ -238,12 +239,14 @@ func (c Context) String() string {
 }
 
 type Store struct {
-	Data map[string][]ObjectVersion
+	Data  map[string][]ObjectVersion
+	Hints map[int]map[string][]ObjectVersion
 }
 
 func NewStore() *Store {
 	return &Store{
-		Data: make(map[string][]ObjectVersion),
+		Data:  make(map[string][]ObjectVersion),
+		Hints: make(map[int]map[string][]ObjectVersion),
 	}
 }
 
@@ -328,6 +331,15 @@ func (s *Store) Put(key string, incoming ObjectVersion) {
 	// Add incoming version after removing versions it superseded.
 	newVersions = append(newVersions, incoming)
 	s.Data[key] = newVersions
+}
+
+func (s *Store) AddHint(intendedNodeID int, key string, version ObjectVersion) {
+	if s.Hints[intendedNodeID] == nil {
+		s.Hints[intendedNodeID] =
+			make(map[string][]ObjectVersion)
+	}
+
+	s.Hints[intendedNodeID][key] = append(s.Hints[intendedNodeID][key], version)
 }
 
 func IncrementContext(ctx Context, nodeID int) Context {
@@ -421,6 +433,20 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 	return nil
 }
 
+func (req *Requests) SendPutResultToClient(result bool, reply *bool) error {
+	req.PutResult = result
+
+	status := "FAILED"
+	if result {
+		status = "SUCCEEDED"
+	}
+	fmt.Printf("Sending result to client: PUT %v\n", status)
+
+	*reply = true
+
+	return nil
+}
+
 func (req *Requests) SendGetRequest(key string, reply *bool) error {
 	req.mu.Lock()
 	defer req.mu.Unlock()
@@ -464,6 +490,17 @@ func (req *Requests) ListenGetResults(key string, reply *[]ObjectVersion) error 
 
 	// consume the results
 	req.GetResults = []ObjectVersion{}
+
+	return nil
+}
+
+func (req *Requests) ListenPutResult(key string, reply *bool) error {
+	result := req.PutResult
+
+	*reply = result
+
+	// consume the result
+	req.PutResult = false
 
 	return nil
 }
