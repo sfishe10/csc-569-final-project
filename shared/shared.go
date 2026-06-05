@@ -405,7 +405,7 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 	}
 
 	new_context := IncrementContext(putReq.Context, coord_id)
-	fmt.Printf("Old context: %v\nNew context: %v\n", putReq.Context, new_context)
+	// fmt.Printf("Old context: %v\nNew context: %v\n", putReq.Context, new_context)
 
 	putReq.Context = new_context
 
