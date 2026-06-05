@@ -18,6 +18,7 @@ func put(server rpc.Client, key string, data string) bool {
 	obj := shared.PutRequest{
 		CoordID:  -1, // this will be updated later
 		TargetID: -1,
+		SubID:    -1,
 		Key:      key,
 		Object:   data,
 		Context:  contexts[key],

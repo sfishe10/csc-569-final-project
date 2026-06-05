@@ -186,7 +186,8 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 
 			// transfer data to that node
 			fmt.Printf("Node %d is down. Sending data to Node %d instead.\n", failedNode, subNode)
-			incomingCoordPutRequest.TargetID = subNode
+			incomingCoordPutRequest.TargetID = failedNode
+			incomingCoordPutRequest.SubID = subNode
 
 			var reply bool
 			err := server.Call("Requests.SendPutRequest", incomingCoordPutRequest, &reply)
@@ -293,6 +294,28 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 		return
 	}
 
+	if incomingReplicaPutRequest.SubID != -1 {
+		// the intended replica node is down, so this node is being used as substitute
+		fmt.Printf("REPLICATING (temporary): %v -> %v\n", incomingReplicaPutRequest.Key, incomingReplicaPutRequest.Object)
+
+		// write locally
+		obj_version := shared.ObjectVersion{
+			Object:  incomingReplicaPutRequest.Object,
+			Context: incomingReplicaPutRequest.Context,
+		}
+		self_node.Store.AddHint(incomingReplicaPutRequest.TargetID, incomingReplicaPutRequest.Key, obj_version)
+
+		// send a response so the coordinator knows it was written
+		var reply bool
+		err = server.Call("Requests.RespondToPutRequest", id, &reply)
+		if err != nil {
+			fmt.Println("Error responding to put request:", err)
+			return
+		}
+
+		return
+	}
+
 	fmt.Printf("REPLICATING: %v -> %v\n", incomingReplicaPutRequest.Key, incomingReplicaPutRequest.Object)
 
 	// write locally
@@ -306,7 +329,7 @@ func handleReplicaPutRequest(server rpc.Client, id int) {
 	var reply bool
 	err = server.Call("Requests.RespondToPutRequest", id, &reply)
 	if err != nil {
-		fmt.Println("Error responding to get request:", err)
+		fmt.Println("Error responding to put request:", err)
 		return
 	}
 }

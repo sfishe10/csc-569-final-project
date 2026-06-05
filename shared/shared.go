@@ -216,6 +216,7 @@ func CombineTables(table1 *Membership, table2 *Membership) *Membership {
 type PutRequest struct {
 	CoordID  int
 	TargetID int
+	SubID    int
 	Key      string
 	Object   string
 	Context  Context
@@ -376,10 +377,9 @@ func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
 	// first clear out any old responses from the last put request
 	req.ReplicaPutResponses = []int{}
 
-	if putReq.CoordID != -1 && putReq.TargetID != -1 {
+	if putReq.SubID != -1 {
 		// the request is being sent to a substitute node (hinted handoff)
-		// everything is already specified in the request, so just send it to the target node
-		req.PendingReplicaPutRequest[putReq.TargetID] = putReq
+		req.PendingReplicaPutRequest[putReq.SubID] = putReq
 		return nil
 	}
 
