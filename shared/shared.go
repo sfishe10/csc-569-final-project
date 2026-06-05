@@ -91,6 +91,20 @@ func (m *Membership) Get(payload int, reply *Node) error {
 	return nil
 }
 
+func (m *Membership) SortedNodes() []Node {
+	nodes := make([]Node, 0, len(m.Members))
+
+	for _, node := range m.Members {
+		nodes = append(nodes, node)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
+
+	return nodes
+}
+
 /*---------------*/
 
 // MembershipRequest struct represents a new message request to a client
@@ -200,7 +214,8 @@ func CombineTables(table1 *Membership, table2 *Membership) *Membership {
 /*---------------*/
 
 type PutRequest struct {
-	Coord_id int
+	CoordID  int
+	TargetID int
 	Key      string
 	Object   string
 	Context  Context
@@ -361,11 +376,18 @@ func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
 	// first clear out any old responses from the last put request
 	req.ReplicaPutResponses = []int{}
 
+	if putReq.CoordID != -1 && putReq.TargetID != -1 {
+		// the request is being sent to a substitute node (hinted handoff)
+		// everything is already specified in the request, so just send it to the target node
+		req.PendingReplicaPutRequest[putReq.TargetID] = putReq
+		return nil
+	}
+
 	coordinator_node := req.FindCoordinator(HashString(putReq.Key))
 	coord_id := coordinator_node.NodeID
 
 	// attach the coordinator's ID to the request
-	putReq.Coord_id = coord_id
+	putReq.CoordID = coord_id
 	req.PendingCoordPutRequest[coord_id] = putReq
 
 	return nil
@@ -577,6 +599,17 @@ func (req *Requests) FindCoordinator(hash uint64) RingEntry {
 	}
 
 	return req.Ring[0] // wrap around
+}
+
+func GetPreferenceList(id int) []int {
+	replicaIds := []int{}
+
+	for i := 1; i <= N; i++ {
+		id := ((id + i - 1) % MAX_NODES) + 1 // wrap around
+		replicaIds = append(replicaIds, id)
+	}
+
+	return replicaIds
 }
 
 func PrintVersions(versions []ObjectVersion) {

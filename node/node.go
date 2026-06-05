@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/rpc"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -28,6 +29,35 @@ const (
 )
 
 var self_node shared.Node
+
+var membership *shared.Membership
+
+// the primary designated replicas
+var preference_list []int
+
+// nodes that have temporarily failed
+var temp_failed_nodes []int
+
+func findFailedNode(responsiveNodeIds []int) int {
+	for _, id := range preference_list {
+		if !slices.Contains(responsiveNodeIds, id) {
+			return id
+		}
+	}
+
+	return -1
+}
+
+func findNextHealthyNode() int {
+	allNodes := membership.SortedNodes()
+	for _, node := range allNodes {
+		if node.Alive {
+			return node.ID
+		}
+	}
+
+	return -1
+}
 
 // Send the current membership table to a neighboring node with the provided ID
 func sendMessage(server rpc.Client, id int, membership shared.Membership) {
@@ -126,11 +156,13 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 			}
 
 			acks += len(temp_ack_ids)
-			ack_ids = append(ack_ids, id)
+			ack_ids = append(ack_ids, temp_ack_ids...)
 
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+
+	// the W quorum was reached, so return data to client
 	fmt.Printf("PUT SUCCESSFUL: %v\n", incomingCoordPutRequest.Key)
 
 	var reply bool
@@ -139,6 +171,43 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 	if err != nil {
 		fmt.Println("Error sending success to client:", err)
 		return false
+	}
+
+	// continue checking for the rest of the responses
+	deadline = time.After(QUORUM_TIMEOUT)
+	for acks <= N {
+		select {
+		case <-deadline:
+			// One of the nodes is down
+			failedNode := findFailedNode(ack_ids)
+
+			// find the next available node
+			subNode := findNextHealthyNode()
+
+			// transfer data to that node
+			fmt.Printf("Node %d is down. Sending data to Node %d instead.\n", failedNode, subNode)
+			incomingCoordPutRequest.TargetID = subNode
+
+			var reply bool
+			err := server.Call("Requests.SendPutRequest", incomingCoordPutRequest, &reply)
+			if err != nil {
+				fmt.Println("Error sending Put request:", err)
+			}
+
+			return false
+		default:
+			temp_ack_ids := []int{}
+			err := server.Call("Requests.ListenReplicaPutResponses", id, &temp_ack_ids)
+			if err != nil {
+				fmt.Println("Error listening for responses:", err)
+				return false
+			}
+
+			acks += len(temp_ack_ids)
+			ack_ids = append(ack_ids, temp_ack_ids...)
+
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	return true
@@ -318,6 +387,8 @@ func main() {
 	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER, Store: *store}
 	var self_node_response shared.Node // Allocate space for a response to overwrite this
 
+	preference_list = shared.GetPreferenceList(id)
+
 	// Add node with input ID
 	if err := server.Call("Membership.Add", self_node, &self_node_response); err != nil {
 		fmt.Println("Error:2 Membership.Add()", err)
@@ -328,7 +399,7 @@ func main() {
 	neighbors := self_node.InitializeNeighbors(id)
 	fmt.Println("Neighbors:", neighbors)
 
-	membership := shared.NewMembership()
+	membership = shared.NewMembership()
 	membership.Add(self_node, &self_node)
 
 	sendMessage(*server, neighbors[0], *membership)
