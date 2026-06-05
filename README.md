@@ -6,7 +6,7 @@ For the server, run this command from the root directory:
 
 go run ./server
 
-For each of the nodes, run this command from the root directory:
+For each node (1, 2,...8), run this command from the root directory:
 
 go run ./node <id>
 
