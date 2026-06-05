@@ -500,11 +500,7 @@ func main() {
 	}
 
 	// clear out any stale messages in case the node is coming back from temporary failure
-	var incomingMemberships []shared.MembershipRequest
-	err = server.Call("Requests.ListenMemberships", id, &incomingMemberships)
-	if err != nil {
-		fmt.Println("Error clearing out membership messages:", err)
-	}
+	clearStaleMessages(server)
 
 	neighbors := self_node.InitializeNeighbors(id)
 	fmt.Println("Neighbors:", neighbors)
@@ -522,6 +518,17 @@ func main() {
 
 	wg.Add(1)
 	wg.Wait()
+}
+
+func clearStaleMessages(server *rpc.Client) {
+	id := self_node.ID
+
+	var reply bool
+	err := server.Call("Requests.ClearStaleRequests", id, &reply)
+	if err != nil {
+		fmt.Println("Error clearing out stale requests:", err)
+	}
+
 }
 
 func runAfterX(server *rpc.Client, node *shared.Node, membership **shared.Membership, id int) {

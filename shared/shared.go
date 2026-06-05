@@ -638,6 +638,19 @@ func (req *Requests) ListenReplicaGetResponses(coord_id int, reply *[]GetRespons
 	return nil
 }
 
+func (req *Requests) ClearStaleRequests(nodeId int, reply *bool) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
+	delete(req.PendingMemberships, nodeId)
+	delete(req.PendingReplicaGetRequest, nodeId)
+	delete(req.PendingReplicaPutRequest, nodeId)
+	delete(req.PendingCoordGetRequest, nodeId)
+	delete(req.PendingCoordPutRequest, nodeId)
+
+	return nil
+}
+
 type RingEntry struct {
 	Hash   uint64
 	NodeID int
