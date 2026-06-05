@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"lab2/shared"
+	"maps"
 	"math/rand"
 	"net/rpc"
 	"os"
@@ -34,9 +35,6 @@ var membership *shared.Membership
 
 // the primary designated replicas
 var preference_list []int
-
-// nodes that have temporarily failed
-var temp_failed_nodes []int
 
 func findFailedNode(responsiveNodeIds []int) int {
 	for _, id := range preference_list {
@@ -97,17 +95,43 @@ func handleMemberships(server rpc.Client, id int, membership shared.Membership) 
 		updated = shared.CombineTables(updated, &(request.Table))
 	}
 
-	// check for nodes whose heartbeat hasn't increased in the last 18 seconds
+	// check for nodes whose heartbeat hasn't increased in the last 5 seconds
 	for _, node := range updated.Members {
 		if node.ID == id {
 			continue
 		}
-		if (calcTime()-node.Time)/1e9 > 18 {
-			// mark as dead
+		elapsed := (calcTime() - node.Time) / 1e9
+
+		if elapsed > 20 {
+			delete(updated.Members, node.ID)
+			continue
+		}
+
+		if elapsed > 5 {
 			node.Alive = false
 			var reply shared.Node
 			updated.Update(node, &reply)
+			continue
 		}
+
+		// if this node has come back to life and we're storing temporary data for it, transfer the data back
+		var currentNode shared.Node
+		membership.Get(node.ID, &currentNode)
+
+		if currentNode.Alive {
+			// we already know it's alive
+			continue
+		}
+
+		tempData := shared.DataTransfer{TargetID: node.ID, Data: self_node.Store.GetHintedData(node.ID)}
+		if len(tempData.Data) == 0 {
+			continue
+		}
+
+		fmt.Printf("Node %d is back. Transferring data.\n", node.ID)
+
+		transferData(server, tempData)
+
 	}
 
 	return updated
@@ -386,6 +410,53 @@ func readMessages(server rpc.Client, id int, membership shared.Membership) *shar
 	return updatedMembership
 }
 
+func transferData(server rpc.Client, dataTransfer shared.DataTransfer) {
+	var reply bool
+
+	err := server.Call("Requests.SendDataToRevivedNode", dataTransfer, &reply)
+	if err != nil {
+		fmt.Println("Error transferring data:", err)
+		return
+	}
+
+	// make sure the node received the data before deleting
+	deadline := time.After(QUORUM_TIMEOUT)
+	var res bool
+	for !res {
+		select {
+		case <-deadline:
+			fmt.Println("TRANSFER FAILED")
+			return
+		default:
+			err = server.Call("Requests.ListenDataTransferResult", dataTransfer, &res)
+			if err != nil {
+				fmt.Println("Error listening for transfer result:", err)
+				return
+			}
+
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	// the node received the data, so delete it here
+	fmt.Printf("Data transfered to node %d. Deleting from local store.\n", dataTransfer.TargetID)
+	delete(self_node.Store.Hints, dataTransfer.TargetID)
+}
+
+func checkForDataTransfers(server rpc.Client) {
+	var dataTransfers []shared.DataTransfer
+
+	err := server.Call("Requests.CheckForDataTransfers", self_node.ID, &dataTransfers)
+	if err != nil {
+		fmt.Println("Error checking for data transfers:", err)
+		return
+	}
+
+	for _, dt := range dataTransfers {
+		maps.Copy(self_node.Store.Data, dt.Data)
+	}
+}
+
 func calcTime() float64 {
 	return float64(time.Now().UnixNano())
 }
@@ -416,7 +487,7 @@ func main() {
 	currTime := calcTime()
 	// Construct self
 	var store = shared.NewStore()
-	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Role: ROLE_FOLLOWER, Store: *store}
+	self_node = shared.Node{ID: id, Hbcounter: 0, Time: currTime, Alive: true, Store: *store}
 	var self_node_response shared.Node // Allocate space for a response to overwrite this
 
 	preference_list = shared.GetPreferenceList(id)
@@ -426,6 +497,13 @@ func main() {
 		fmt.Println("Error:2 Membership.Add()", err)
 	} else {
 		fmt.Printf("Success: Node created with id= %d\n", id)
+	}
+
+	// clear out any stale messages in case the node is coming back from temporary failure
+	var incomingMemberships []shared.MembershipRequest
+	err = server.Call("Requests.ListenMemberships", id, &incomingMemberships)
+	if err != nil {
+		fmt.Println("Error clearing out membership messages:", err)
 	}
 
 	neighbors := self_node.InitializeNeighbors(id)
@@ -495,7 +573,7 @@ func printMembership(m shared.Membership) {
 		if !val.Alive {
 			status = "is Dead"
 		}
-		fmt.Printf("Node %d (%s) has hb %d, time %.1f and %s\n", val.ID, val.Role, val.Hbcounter, val.Time, status)
+		fmt.Printf("Node %d has hb %d, time %.1f and %s\n", val.ID, val.Hbcounter, val.Time, status)
 	}
 	fmt.Println("")
 }

@@ -28,7 +28,6 @@ type Node struct {
 	Hbcounter int
 	Time      float64
 	Alive     bool
-	Role      string
 	Store     Store
 }
 
@@ -126,6 +125,7 @@ type Requests struct {
 	GetResults               []ObjectVersion
 	PutResult                Context
 	Ring                     []RingEntry
+	PendingDataTransfers     map[int][]DataTransfer
 }
 
 // Returns a new instance of a Requests (pointer).
@@ -153,6 +153,7 @@ func NewRequests() *Requests {
 		ReplicaGetResponses:      []GetResponse{},
 		GetResults:               []ObjectVersion{},
 		Ring:                     Ring,
+		PendingDataTransfers:     make(map[int][]DataTransfer),
 	}
 }
 
@@ -195,12 +196,16 @@ func CombineTables(table1 *Membership, table2 *Membership) *Membership {
 		existingNode, exists := newMembership.Members[id]
 
 		if !exists || existingNode.ID == 0 {
-			var reply Node
-			newMembership.Add(incomingNode, &reply)
-			continue
+			// this node isn't in the current table
+			// if the incoming node is marked as dead, assume we've already deleted it
+			if incomingNode.Alive {
+				var reply Node
+				newMembership.Add(incomingNode, &reply)
+				continue
+			}
 		}
 
-		if incomingNode.Hbcounter > existingNode.Hbcounter {
+		if incomingNode.Hbcounter > existingNode.Hbcounter && incomingNode.Alive {
 			incomingNode.Time = float64(time.Now().UnixNano())
 			var reply Node
 			newMembership.Update(incomingNode, &reply)
@@ -220,6 +225,14 @@ type PutRequest struct {
 	Key      string
 	Object   string
 	Context  Context
+}
+
+type DataTransfer struct {
+	// the node that is transferring the data
+	FromNodeID int
+	// the revived node that is receiveing the data
+	TargetID int
+	Data     map[string][]ObjectVersion
 }
 
 type GetResponse struct {
@@ -358,6 +371,14 @@ func (s *Store) AddHint(intendedNodeID int, key string, version ObjectVersion) {
 	s.Hints[intendedNodeID][key] = append(s.Hints[intendedNodeID][key], version)
 }
 
+func (s *Store) GetHintedData(intendedNodeID int) map[string][]ObjectVersion {
+	if hint, exists := s.Hints[intendedNodeID]; exists {
+		return hint
+	}
+
+	return make(map[string][]ObjectVersion)
+}
+
 func IncrementContext(ctx Context, nodeID int) Context {
 	newClock := make(map[int]int)
 
@@ -390,6 +411,45 @@ func (req *Requests) SendPutRequest(putReq PutRequest, reply *bool) error {
 	putReq.CoordID = coord_id
 	req.PendingCoordPutRequest[coord_id] = putReq
 
+	return nil
+}
+
+func (req *Requests) SendDataToRevivedNode(data DataTransfer, reply *bool) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
+	req.PendingDataTransfers[data.TargetID] = append(req.PendingDataTransfers[data.TargetID], data)
+
+	return nil
+}
+
+func (req *Requests) CheckForDataTransfers(id int, reply *[]DataTransfer) error {
+	req.mu.Lock()
+	defer req.mu.Unlock()
+
+	*reply = req.PendingDataTransfers[id]
+
+	// consume the request
+	delete(req.PendingDataTransfers, id)
+
+	return nil
+}
+
+func (req *Requests) ListenDataTransferResult(sentDt DataTransfer, reply *bool) error {
+	fromNodeId := sentDt.FromNodeID
+	targetId := sentDt.TargetID
+
+	dts := req.PendingDataTransfers[targetId]
+
+	for _, dt := range dts {
+		if dt.FromNodeID == fromNodeId {
+			// the transfer is still pending
+			*reply = false
+			return nil
+		}
+	}
+
+	*reply = true
 	return nil
 }
 
