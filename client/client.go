@@ -32,7 +32,7 @@ func put(server rpc.Client, key string, data string) bool {
 
 	// wait for the response
 	deadline := time.After(QUORUM_TIMEOUT)
-	var res bool
+	var res shared.Context
 	for {
 		select {
 		case <-deadline:
@@ -42,10 +42,13 @@ func put(server rpc.Client, key string, data string) bool {
 			err = server.Call("Requests.ListenPutResult", key, &res)
 			if err != nil {
 				fmt.Println("Error listening for result:", err)
-				return res
+				return false
 			}
 
-			if res {
+			if len(res.VectorClock) > 0 {
+				// update the stored context for this key
+				contexts[key] = res
+
 				return true
 			}
 

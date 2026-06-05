@@ -59,6 +59,13 @@ func findNextHealthyNode() int {
 	return -1
 }
 
+func markNodeAsDead(id int) {
+	var failedNode shared.Node
+	membership.Get(id, &failedNode)
+	failedNode.Alive = false
+	membership.Update(failedNode, &failedNode)
+}
+
 // Send the current membership table to a neighboring node with the provided ID
 func sendMessage(server rpc.Client, id int, membership shared.Membership) {
 	request := shared.MembershipRequest{
@@ -139,7 +146,7 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 			// write failed
 			fmt.Printf("WRITE FAILED: %v\n", incomingCoordPutRequest.Key)
 			var reply bool
-			err := server.Call("Requests.SendPutResultToClient", false, &reply)
+			err := server.Call("Requests.SendPutResultToClient", shared.Context{}, &reply)
 
 			if err != nil {
 				fmt.Println("Error sending failure to client:", err)
@@ -166,10 +173,10 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 	fmt.Printf("PUT SUCCESSFUL: %v\n", incomingCoordPutRequest.Key)
 
 	var reply bool
-	err = server.Call("Requests.SendPutResultToClient", true, &reply)
+	err = server.Call("Requests.SendPutResultToClient", incomingCoordPutRequest.Context, &reply)
 
 	if err != nil {
-		fmt.Println("Error sending success to client:", err)
+		fmt.Println("Error sending put result to client:", err)
 		return false
 	}
 
@@ -179,14 +186,16 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 		select {
 		case <-deadline:
 			// One of the nodes is down
-			failedNode := findFailedNode(ack_ids)
+			failedNodeId := findFailedNode(ack_ids)
+			// mark this node as dead
+			markNodeAsDead(failedNodeId)
 
 			// find the next available node
 			subNode := findNextHealthyNode()
 
 			// transfer data to that node
-			fmt.Printf("Node %d is down. Sending data to Node %d instead.\n", failedNode, subNode)
-			incomingCoordPutRequest.TargetID = failedNode
+			fmt.Printf("Node %d is down. Sending data to Node %d instead.\n", failedNodeId, subNode)
+			incomingCoordPutRequest.TargetID = failedNodeId
 			incomingCoordPutRequest.SubID = subNode
 
 			var reply bool

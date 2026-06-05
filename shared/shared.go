@@ -124,7 +124,7 @@ type Requests struct {
 	ReplicaPutResponses      []int
 	ReplicaGetResponses      []GetResponse
 	GetResults               []ObjectVersion
-	PutResult                bool
+	PutResult                Context
 	Ring                     []RingEntry
 }
 
@@ -405,6 +405,7 @@ func (req *Requests) ListenCoordPutRequest(coord_id int, reply *PutRequest) erro
 	}
 
 	new_context := IncrementContext(putReq.Context, coord_id)
+	fmt.Printf("Old context: %v\nNew context: %v\n", putReq.Context, new_context)
 
 	putReq.Context = new_context
 
@@ -455,11 +456,11 @@ func (req *Requests) ListenReplicaPutResponses(coord_id int, reply *[]int) error
 	return nil
 }
 
-func (req *Requests) SendPutResultToClient(result bool, reply *bool) error {
+func (req *Requests) SendPutResultToClient(result Context, reply *bool) error {
 	req.PutResult = result
 
 	status := "FAILED"
-	if result {
+	if len(result.VectorClock) > 0 {
 		status = "SUCCEEDED"
 	}
 	fmt.Printf("Sending result to client: PUT %v\n", status)
@@ -516,13 +517,13 @@ func (req *Requests) ListenGetResults(key string, reply *[]ObjectVersion) error 
 	return nil
 }
 
-func (req *Requests) ListenPutResult(key string, reply *bool) error {
+func (req *Requests) ListenPutResult(key string, reply *Context) error {
 	result := req.PutResult
 
 	*reply = result
 
 	// consume the result
-	req.PutResult = false
+	req.PutResult = Context{}
 
 	return nil
 }
