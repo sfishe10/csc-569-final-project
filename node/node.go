@@ -47,14 +47,35 @@ func findFailedNode(responsiveNodeIds []int) int {
 }
 
 func findNextHealthyNode() int {
+	lastNode := preference_list[len(preference_list)-1]
 	allNodes := membership.SortedNodes()
-	for _, node := range allNodes {
+
+	if len(allNodes) == 0 {
+		return -1
+	}
+
+	startIndex := -1
+	for i, node := range allNodes {
+		if node.ID == lastNode {
+			startIndex = i
+			break
+		}
+	}
+
+	if startIndex == -1 {
+		return -1
+	}
+
+	for offset := 1; offset <= len(allNodes); offset++ {
+		i := (startIndex + offset) % len(allNodes)
+		node := allNodes[i]
+
 		if node.Alive {
 			return node.ID
 		}
 	}
 
-	return -1
+	return -1 // no healthy node found
 }
 
 func markNodeAsDead(id int) {
@@ -216,6 +237,12 @@ func handleCoordPutRequest(server rpc.Client, id int) bool {
 
 			// find the next available node
 			subNode := findNextHealthyNode()
+
+			if subNode == -1 {
+				// no healthy node was found
+				fmt.Println("No substitute node found.")
+				return false
+			}
 
 			// transfer data to that node
 			fmt.Printf("Node %d is down. Sending data to Node %d instead.\n", failedNodeId, subNode)
