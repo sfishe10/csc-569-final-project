@@ -227,14 +227,6 @@ type PutRequest struct {
 	Context  Context
 }
 
-type DataTransfer struct {
-	// the node that is transferring the data
-	FromNodeID int
-	// the revived node that is receiveing the data
-	TargetID int
-	Data     map[string][]ObjectVersion
-}
-
 type GetRequest struct {
 	// only used if the request was intended for a different node
 	TargetID int
@@ -246,6 +238,15 @@ type GetResponse struct {
 	FromNodeID int
 	Key        string
 	Versions   []ObjectVersion
+}
+
+// when a node comes back after temporary failure, this is used to transfer data over from the substitute node
+type DataTransfer struct {
+	// the node that is transferring the data
+	FromNodeID int
+	// the revived node that is receiveing the data
+	TargetID int
+	Data     map[string][]ObjectVersion
 }
 
 type ObjectVersion struct {
